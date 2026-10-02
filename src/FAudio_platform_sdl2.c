@@ -33,14 +33,43 @@
 #if !SDL_VERSION_ATLEAST(2, 0, 9)
 #error "SDL version older than 2.0.9"
 #endif /* !SDL_VERSION_ATLEAST */
+#ifdef KRKRSDL2_LIBRETRO
+/* libretro audio capture: mix callback copies output to a ring buffer
+ * that the libretro core reads via dlsym. */
+#include <stdlib.h>
+#include <string.h>
+/* Lock-free SPSC ring buffer: the SDL audio thread is the sole writer,
+ * retro_run (via krkr_get_audio) is the sole reader. Indices are monotonic
+ * frame counters; data index = counter % capacity. */
+float *SDL_libretro_audio_buf = NULL;
+int SDL_libretro_audio_capacity = 0;
+volatile int SDL_libretro_audio_write = 0; /* frames written (monotonic) */
+volatile int SDL_libretro_audio_read = 0;  /* frames read (monotonic) */
+int SDL_libretro_audio_freq = 0;
+int SDL_libretro_audio_channels = 0;
+#define SDL_LIBRETRO_AUDIO_MAX_FRAMES 16384
+static int libretro_audio_enabled = -1;
+/* Set by the engine (SDLApplication.cpp) when the frontend has stopped polling
+ * (RetroArch menu open / window inactive): the audio callback then emits silence
+ * and does not advance the FAudio engine. Same module: FAudio is static-linked
+ * into libkrkrsdl2.so. */
+extern volatile int krkrsdl2_paused;
+#endif
 
-/* Mixer Thread */
 
 static void FAudio_INTERNAL_MixCallback(void *userdata, Uint8 *stream, int len)
 {
 	FAudio *audio = (FAudio*) userdata;
 
 	FAudio_zero(stream, len);
+#ifdef KRKRSDL2_LIBRETRO
+	/* libretro pause: silence, and do not run the engine or push to the ring —
+	 * the core is not reading it while paused, and the game must not progress. */
+	if (krkrsdl2_paused)
+	{
+		return;
+	}
+#endif
 	if (audio->active)
 	{
 		FAudio_INTERNAL_UpdateEngine(
@@ -48,6 +77,36 @@ static void FAudio_INTERNAL_MixCallback(void *userdata, Uint8 *stream, int len)
 			(float*) stream
 		);
 	}
+
+#ifdef KRKRSDL2_LIBRETRO
+	/* libretro audio capture */
+	if (libretro_audio_enabled < 0)
+		libretro_audio_enabled = getenv("KRKRSDL2_LIBRETRO") != NULL;
+	if (libretro_audio_enabled && SDL_libretro_audio_buf && len > 0)
+	{
+		int ch = SDL_libretro_audio_channels;
+		int nframes = len / (ch * sizeof(float));
+		int w = SDL_libretro_audio_write;
+		int r = SDL_libretro_audio_read;
+		int cap = SDL_libretro_audio_capacity;
+		int used = w - r;
+		int space = cap - used;
+		if (nframes > space) nframes = space;
+		if (nframes > 0)
+		{
+			float *src = (float*)stream;
+			for (int i = 0; i < nframes; i++)
+			{
+				int idx = (w + i) % cap;
+				float *dst = SDL_libretro_audio_buf + idx * 2;
+				if (ch == 2) { dst[0] = src[i*2]; dst[1] = src[i*2+1]; }
+				else         { dst[0] = dst[1] = src[i]; }
+			}
+			/* Publish only after data is written. */
+			SDL_libretro_audio_write = w + nframes;
+		}
+	}
+#endif
 }
 
 /* Platform Functions */
@@ -194,6 +253,22 @@ iosretry:
 		&DATAFORMAT_SUBTYPE_IEEE_FLOAT
 	);
 	*updateSize = have.samples;
+#ifdef KRKRSDL2_LIBRETRO
+	/* libretro: allocate audio capture buffer */
+	if (libretro_audio_enabled < 0)
+		libretro_audio_enabled = getenv("KRKRSDL2_LIBRETRO") != NULL;
+	if (libretro_audio_enabled && !SDL_libretro_audio_buf)
+	{
+		SDL_libretro_audio_channels = have.channels;
+		SDL_libretro_audio_freq = have.freq;
+		SDL_libretro_audio_capacity = SDL_LIBRETRO_AUDIO_MAX_FRAMES;
+		SDL_libretro_audio_read = 0;
+		SDL_libretro_audio_write = 0;
+		SDL_libretro_audio_buf = (float*)malloc(SDL_LIBRETRO_AUDIO_MAX_FRAMES * 2 * sizeof(float));
+		fprintf(stderr, "libretro audio: buf=%p freq=%d ch=%d\n",
+			(void*)SDL_libretro_audio_buf, SDL_libretro_audio_freq, SDL_libretro_audio_channels);
+	}
+#endif
 
 	/* SDL_AudioDeviceID is a Uint32, anybody using a 16-bit PC still? */
 	*platformDevice = (void*) ((size_t) device);
