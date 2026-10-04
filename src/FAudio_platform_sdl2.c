@@ -36,6 +36,7 @@
 #ifdef KRKRSDL2_LIBRETRO
 /* libretro audio capture: mix callback copies output to a ring buffer
  * that the libretro core reads via dlsym. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 /* Lock-free SPSC ring buffer: the SDL audio thread is the sole writer,
@@ -265,8 +266,9 @@ iosretry:
 		SDL_libretro_audio_read = 0;
 		SDL_libretro_audio_write = 0;
 		SDL_libretro_audio_buf = (float*)malloc(SDL_LIBRETRO_AUDIO_MAX_FRAMES * 2 * sizeof(float));
-		fprintf(stderr, "libretro audio: buf=%p freq=%d ch=%d\n",
-			(void*)SDL_libretro_audio_buf, SDL_libretro_audio_freq, SDL_libretro_audio_channels);
+		fprintf(stderr, "libretro audio: buf=%p freq=%d ch=%d driver=%s\n",
+			(void*)SDL_libretro_audio_buf, SDL_libretro_audio_freq, SDL_libretro_audio_channels,
+			SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "(none)");
 	}
 #endif
 
