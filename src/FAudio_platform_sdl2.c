@@ -55,6 +55,11 @@ static int libretro_audio_enabled = -1;
  * and does not advance the FAudio engine. Same module: FAudio is static-linked
  * into libkrkrsdl2.so. */
 extern volatile int krkrsdl2_paused;
+/* Set by the core wrapper (via krkr_set_audio_suspended) when the frontend
+ * reports audio suspended, e.g. across a fullscreen/window transition. Same
+ * effect as the pause gate: silence, and do not advance the engine, because the
+ * frontend is not consuming what would be produced. */
+extern volatile int krkrsdl2_audio_suspended;
 #endif
 
 
@@ -64,9 +69,10 @@ static void FAudio_INTERNAL_MixCallback(void *userdata, Uint8 *stream, int len)
 
 	FAudio_zero(stream, len);
 #ifdef KRKRSDL2_LIBRETRO
-	/* libretro pause: silence, and do not run the engine or push to the ring —
-	 * the core is not reading it while paused, and the game must not progress. */
-	if (krkrsdl2_paused)
+	/* libretro pause/suspend: silence, and do not run the engine or push to the
+	 * ring — the core is not reading it while paused/suspended, and the game
+	 * must not progress. */
+	if (krkrsdl2_paused || krkrsdl2_audio_suspended)
 	{
 		return;
 	}
