@@ -12,12 +12,6 @@ audio in the `krkrsdl2` SDL2/libretro port — adding a libretro capture path.
 
 `git merge-base HEAD upstream/master` reproduces the fork point.
 
-## Local commits on top of the fork point
-
-```
-fa5d554  libretro: capture FAudio mix output to ring buffer behind #ifdef KRKRSDL2_LIBRETRO
-79d5203  libretro audio: replace racy shared buffer with lock-free SPSC ring
-```
 
 ## Consumers
 
